@@ -1,5 +1,6 @@
 
 devtools::load_all("package/pitchinj")
+dir.create("output/models", recursive = TRUE, showWarnings = FALSE)
 
 logger::log_info("Loading data")
 
@@ -43,61 +44,40 @@ logger::log_info("Estimating models")
 
 # Report group differences and univariate Cox PH regression coefficients ----
 
-feature_subset_univariate <- list(
-  full = pitchinj::get_features(type = c("demographics", "ballistics"), model = "univariate"),
-  majors = pitchinj::get_features(type = c("demographics", "ballistics"), model = "univariate"),
-  minors = pitchinj::get_features(type = c("demographics", "ballistics"), model = "univariate")
+feature_subset_univariate <- pitchinj::get_features(
+  type = "ballistics",
+  model = "univariate"
 )
 
-group_difference <- list()
 univariate_coxph <- list()
 
-for (subset in c("full", "majors", "minors")) {
+for (outcome in c("hits", "ucl")) {
 
-  group_difference[[subset]] <- list()
-  univariate_coxph[[subset]] <- list()
+  univariate_coxph[[outcome]] <- list()
 
-  for (outcome in c("hits", "il", "ucl")) {
+  pitchers <- pitcher_subset$full
+  features <- feature_subset_univariate
+  severity_col <- paste0("severity_", outcome)
+  pitches_col <- paste0("pitches_", outcome)
 
-    group_difference[[subset]][[outcome]] <- list()
-    univariate_coxph[[subset]][[outcome]] <- list()
+  for (feature in features) {
 
-    pitchers <- pitcher_subset[[subset]]
-    features <- feature_subset_univariate[[subset]]
-    severity_col <- paste0("severity_", outcome)
-    pitches_col <- paste0("pitches_", outcome)
+    filter <- pitchinj::default_features |>
+      dplyr::filter(variable == feature) |>
+      dplyr::pull(filter)
 
-    # Manually remove Stuff+ and Location+ as features for Minors 2022--2025 cohort because it is
-    # NA for the vast majority of pitchers. TODO: Clean this up by generalizing
-    # pitchinj::get_features() to allow different features between majors and minors cohorts.
-    if (subset == "minors") {
-      features <- setdiff(features, c("stuff", "location"))
-    }
+    data_feature <- data_year_over_year |>
+      dplyr::filter(eval(parse(text = filter))) |>
+      dplyr::inner_join(pitchers, by = c("player_id", "year")) |>
+      dplyr::mutate(
+        severity = !!rlang::sym(severity_col),
+        pitches = !!rlang::sym(pitches_col),
+      )
 
-    for (feature in features) {
-
-      filter <- pitchinj::default_features |>
-        dplyr::filter(variable == feature) |>
-        dplyr::pull(filter)
-
-      data_feature <- data_year_over_year |>
-        dplyr::filter(eval(parse(text = filter))) |>
-        dplyr::inner_join(pitchers, by = c("player_id", "year")) |>
-        dplyr::mutate(
-          severity = !!rlang::sym(severity_col),
-          pitches = !!rlang::sym(pitches_col),
-        )
-
-      # Report averages in injured/non-injured groups
-      group_difference[[subset]][[outcome]][[feature]] <- data_feature |>
-        pitchinj::report_group_mean_difference(feature) |>
-          tibble::add_column(n = nrow(data_feature), .after = "variable")
-
-      # Estimate univariate Cox PH regression models
-      univariate_coxph[[subset]][[outcome]][[feature]] <- data_feature |>
-        pitchinj::standardize_data(model = "univariate") |>
-        pitchinj::fit_injury_model(model = "coxph", features = feature, strata = NULL)
-    }
+    # Estimate univariate Cox PH regression models
+    univariate_coxph[[outcome]][[feature]] <- data_feature |>
+      pitchinj::standardize_data(model = "univariate") |>
+      pitchinj::fit_injury_model(model = "coxph", features = feature)
   }
 }
 
@@ -121,6 +101,24 @@ for (subset in c("majors", "minors", "full")) {
 
   pitchers <- pitcher_subset[[subset]]
   features <- feature_subset_multivariate[[subset]]
+  scaled_features <- pitchinj::get_features(only_scaled = TRUE)
+
+  multivariate_coxph[[subset]]$effect_unit <- data_year_over_year |>
+    dplyr::inner_join(pitchers, by = c("player_id", "year")) |>
+    dplyr::summarize(
+      dplyr::across(
+        .cols = dplyr::all_of(features),
+        .fns = sd
+      )
+    ) |>
+    tidyr::pivot_longer(cols = dplyr::everything(), names_to = "variable", values_to = "sd") |>
+    dplyr::mutate(
+      unit = dplyr::case_when(
+        variable %in% scaled_features ~ sd,
+        grepl("^usage_", variable) ~ 0.1,
+        TRUE ~ 1
+      )
+    )
 
   data_subset <- data_year_over_year |>
     dplyr::inner_join(pitchers, by = c("player_id", "year")) |>
@@ -136,7 +134,7 @@ for (subset in c("majors", "minors", "full")) {
     data.table::fwrite(data_subset, file = "output/models/data_full_cohort.csv")
   }
 
-  for (outcome in c("il", "ucl", "hits")) {
+  for (outcome in c("ucl", "hits")) {
     multivariate_coxph[[subset]][[outcome]] <- data_subset |>
       dplyr::mutate(
         severity = !!rlang::sym(glue::glue("severity_{outcome}")),
@@ -235,15 +233,11 @@ for (subset in c("majors", "minors", "full")) {
 # Write estimated models to file ----
 logger::log_info("Saving results")
 
-dir.create("output/models", recursive = TRUE, showWarnings = FALSE)
 data.table::fwrite(pitch_tracking_list$pitch_reclass, file = "output/models/pitch_reclass.csv")
 data.table::fwrite(pitch_tracking_list$vendor_translation, file = "output/models/vendor_translation.csv")
 data.table::fwrite(data_year_over_year, file = "output/models/data_year_over_year.csv")
-saveRDS(group_difference, file = "output/models/group_difference.rds")
 saveRDS(univariate_coxph, file = "output/models/univariate_coxph.rds")
 saveRDS(multivariate_coxph, file = "output/models/multivariate_coxph.rds")
 saveRDS(cumulative_incidence_cv, file = "output/models/cumulative_incidence_cv.rds")
-saveRDS(lasso_coxph, file = "output/models/lasso_coxph.rds")
-saveRDS(lasso_velo, file = "output/models/lasso_velo.rds")
 
 logger::log_info("Done")
