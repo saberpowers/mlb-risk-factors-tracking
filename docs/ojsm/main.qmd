@@ -1,0 +1,24 @@
+
+---
+execute:
+  cache: true
+  echo: false
+---
+
+```{r, cache = FALSE, message = FALSE}
+root <- "../.."
+devtools::load_all(file.path(root, "package/pitchinj"))
+source(file.path(root, "scripts/functions/tables.R"))
+
+output_dir <- file.path(root, "output")
+multivariate_coxph <- readRDS(file.path(output_dir, "models/multivariate_coxph.rds"))
+```
+
+```{r}
+```
+
+```{r}
+tab_hits_multivariate(multivariate_coxph)
+```
+
+
