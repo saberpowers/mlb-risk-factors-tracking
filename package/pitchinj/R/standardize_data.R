@@ -33,11 +33,11 @@ standardize_data <- function(data, ...) {
   data_standardized <- data |>
     dplyr::mutate(
       dplyr::across(
-        .cols = dplyr::all_of(get_features(only_centered = TRUE, ...)),
+        .cols = dplyr::any_of(get_features(only_centered = TRUE, ...)),
         .fns = \(x) x - mean(x, na.rm = TRUE)
       ),
       dplyr::across(
-        .cols = dplyr::all_of(get_features(only_scaled = TRUE, ...)),
+        .cols = dplyr::any_of(get_features(only_scaled = TRUE, ...)),
         .fns = \(x) x / sd(x, na.rm = TRUE)
       )
     )

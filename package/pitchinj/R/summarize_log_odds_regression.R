@@ -5,6 +5,8 @@
 #'
 #' @param fit A fitted model object. Supported types include objects of class
 #'   \code{"coxph"}, \code{"clm"}, \code{"glm"}, \code{"brmsfit"}, and \code{"cv.glmnet"}.
+#' @param effect_unit optional table specifying the unit increase corresponding to the regression
+#'   coefficient
 #' @param variable_labels An optional named character vector or \code{NA}. If provided, used to
 #'   rename variables for display. Defaults to \code{NA}.
 #' @param format_pretty Logical. If \code{TRUE}, returns formatted output for LaTeX with percentage
@@ -27,6 +29,7 @@
 #'
 #' @export
 summarize_log_odds_regression <- function(fit,
+                                          effect_unit = NULL,
                                           grouped_features = c("usage_SI", "usage_CT", "usage_SLSW", "usage_CBKC", "usage_CHSF"),
                                           variable_labels = NA,
                                           format_pretty = FALSE,
@@ -61,6 +64,10 @@ summarize_log_odds_regression <- function(fit,
 
   z_score <- -qnorm((1 - confidence_interval_coverage) / 2)
 
+  if (is.null(effect_unit)) {
+    effect_unit <- tibble::tibble(variable = NULL, effect_unit = NULL)
+  }
+
   if ("coxph" %in% class(fit) & !is.null(grouped_features)) {
     b <- coef(fit)[grouped_features]
     V <- vcov(fit)[grouped_features, grouped_features]
@@ -75,6 +82,7 @@ summarize_log_odds_regression <- function(fit,
   coef_table <- coef_matrix |>
     tibble::as_tibble(rownames = "variable") |>
     dplyr::filter(!variable %in% c("(Intercept)", "Intercept", names(fit$alpha))) |>  # remove intercepts
+    dplyr::left_join(effect_unit, by = "variable") |>
     dplyr::left_join(wald_p_value, by = "variable") |>
     dplyr::left_join(default_features, by = "variable") |>
     dplyr::mutate(
@@ -90,7 +98,7 @@ summarize_log_odds_regression <- function(fit,
       lower_bound = exp(estimate - z_score * standard_error) - 1,
       upper_bound = exp(estimate + z_score * standard_error) - 1
     ) |>
-    dplyr::select(variable, effect, lower_bound, upper_bound, p_value)
+    dplyr::select(variable, unit, effect, lower_bound, upper_bound, p_value)
 
   # Benjamini-Hochberg multiple testing correction
   

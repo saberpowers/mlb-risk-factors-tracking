@@ -1,0 +1,11 @@
+input/
+output/
+
+# Quarto rendered and auxiliary files
+*.html
+*.pdf
+*_cache/
+*_files/
+
+# macOS files
+*.DS_Store

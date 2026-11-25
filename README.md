@@ -1,13 +1,10 @@
-# MLB Pitching Injuries
+# Pitch-tracking characteristics and arm injury risk in Major and Minor League Baseball pitchers
 
 ## Folder structure
 
 ```
-├── articles                            # LaTeX code for papers and slides
-│   ├── ajsm
-│   ├── mlb_2025
-│   └── reports                         # dated progress reports
 ├── docs                                # papers and presentations
+│   ├── ojsm
 │   └── saberseminar
 ├── input                               # data go here
 ├── output                              # fitted models go here
