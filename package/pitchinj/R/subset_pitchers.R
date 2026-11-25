@@ -21,8 +21,7 @@
 #'   demographics and ballistics features.}
 #'   \item{\code{minors}}{Player-year combinations for minor-league pitchers (year > 2020) 
 #'   with complete demographics and ballistics features.}
-#'   \item{\code{biomech}}{Player-year combinations (any level) with complete demographics, 
-#'   ballistics, and biomechanics features.}
+#'   \item{\code{full}}{The union of the majors and minors cohorts.}
 #' }
 #'
 #' @details
@@ -41,16 +40,7 @@
 #' @seealso \code{\link{get_features}}
 #'
 #' @export
-subset_pitchers <- function(data, reboot_glossary, verbose = TRUE) {
-
-  features_ball <- get_features(
-    type = c("demographics", "ballistics"),
-    model = "multivariate"
-  )
-  features_biom <- get_features(
-    type = c("demographics", "ballistics", "biomechanics"),
-    model = "biomechanics"
-  )
+subset_pitchers <- function(data, reboot_glossary, verbose = FALSE) {
 
   if (verbose) {
     cat(glue::glue("A+/AA/AAA/MLB pitcher-seasons 2018-2025: {nrow(data)}"), "\n")
@@ -86,28 +76,9 @@ subset_pitchers <- function(data, reboot_glossary, verbose = TRUE) {
   }
 
   pitcher_subset <- list(
-    full = full_cohort |>
-      dplyr::select(player_id, year),
-    majors = majors_cohort |>
-      dplyr::select(player_id, year),
-    minors = minors_cohort |>
-      dplyr::select(player_id, year),
-    biomech = data |>
-      dplyr::select(player_id, year, dplyr::all_of(features_biom)) |>
-      tidyr::drop_na() |>
-      dplyr::select(player_id, year),
-    lassoph = data |>
-      dplyr::select(
-        player_id, year,
-        dplyr::all_of(
-          pitchinj::get_features(type = c("demographics", "ballistics"), model = "biomechanics")
-        ),
-        arm_slot,
-        # Some Reboot metrics may not be present because they are determined to be too heavy-tailed
-        dplyr::any_of(reboot_glossary$variable)
-      ) |>
-      tidyr::drop_na() |>
-      dplyr::select(player_id, year)
+    full = dplyr::select(full_cohort, player_id, year),
+    majors = dplyr::select(majors_cohort, player_id, year),
+    minors = dplyr::select(minors_cohort, player_id, year)
   )
 
   return(pitcher_subset)
