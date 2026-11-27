@@ -12,8 +12,6 @@
 #'   \item{Feature columns required by \code{get_features()}, such as demographics, 
 #'   ballistics, and biomechanics variables.}
 #' }
-#' @param reboot_glossary a table of Reboot documentation from
-#'   \code{\link{pitchinj::get_reboot_metrics()}}
 #'
 #' @return A named list with three elements:
 #' \describe{
@@ -40,43 +38,37 @@
 #' @seealso \code{\link{get_features}}
 #'
 #' @export
-subset_pitchers <- function(data, reboot_glossary, verbose = FALSE) {
+subset_pitchers <- function(data, verbose = FALSE) {
 
-  if (verbose) {
-    cat(glue::glue("A+/AA/AAA/MLB pitcher-seasons 2018-2025: {nrow(data)}"), "\n")
-  }
+  max_year <- max(data$year)
 
-  majors_cohort <- data |>
-    dplyr::filter(level == "MLB", year > 2017)
-  if (verbose) {
-    cat(glue::glue("MLB pitcher-seasons 2018-2025: {nrow(majors_cohort)}"), "\n")
-  }
- 
-  majors_cohort <- majors_cohort |>
+  data_considered <- data |>
+    dplyr::filter(level == "MLB" | (level != "MLB" & year > 2021))
+
+  full_cohort <- data_considered |>
     dplyr::filter(!is.na(velo_primary))
-  if (verbose) {
-    cat(glue::glue("MLB pitcher-seasons 2018-2025 with tracking: {nrow(majors_cohort)}"), "\n")
-  }
+  
+  matched_cohort <- full_cohort |>
+    dplyr::filter(year > 2021)
 
-  minors_cohort <- data |>
-    dplyr::filter(level %in% c("A+", "AA", "AAA"), year > 2021)
-  if (verbose) {
-    cat(glue::glue("A+/AA/AAA pitcher-seasons 2022-2025: {nrow(minors_cohort)}"), "\n")
-  }
+  majors_cohort <- full_cohort |>
+    dplyr::filter(level == "MLB")
 
-  minors_cohort <- minors_cohort |>
-    dplyr::filter(!is.na(velo_primary))
-  if (verbose) {
-    cat(glue::glue("A+/AA/AAA pitcher-seasons 2022-2025 with tracking: {nrow(minors_cohort)}"), "\n")
-  }
+  minors_cohort <- full_cohort |>
+    dplyr::filter(level %in% c("A+", "AA", "AAA"))
 
-  full_cohort <- dplyr::bind_rows(majors_cohort, minors_cohort)
   if (verbose) {
-    cat(glue::glue("A+/AA/AAA/MLB pitcher-seasons 2022-2025 with tracking: {nrow(full_cohort)}"), "\n")
+    cat(glue::glue("A+/AA/AAA/MLB pitcher-seasons 2018-{max_year}: {nrow(data)}"), "\n")
+    cat(glue::glue("MLB 2018-{max_year} and A+/AA/AAA 2022-{max_year}: {nrow(data_considered)}"), "\n")
+    cat(glue::glue("Full cohort: {nrow(full_cohort)}"), "\n")
+    cat(glue::glue("Matched cohort: {nrow(matched_cohort)}"), "\n")
+    cat(glue::glue("Majors cohort: {nrow(majors_cohort)}"), "\n")
+    cat(glue::glue("Minors cohort: {nrow(minors_cohort)}"), "\n")
   }
 
   pitcher_subset <- list(
     full = dplyr::select(full_cohort, player_id, year),
+    matched = dplyr::select(matched_cohort, player_id, year),
     majors = dplyr::select(majors_cohort, player_id, year),
     minors = dplyr::select(minors_cohort, player_id, year)
   )
