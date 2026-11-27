@@ -65,8 +65,10 @@ summarize_log_odds_regression <- function(fit,
   z_score <- -qnorm((1 - confidence_interval_coverage) / 2)
 
   if (is.null(effect_unit)) {
-    effect_unit <- tibble::tibble(variable = NULL, effect_unit = NULL)
+    effect_unit <- tibble::tibble(variable = NA, unit = NA)
   }
+  # Keep track of non-"variable" columns from effect_unit so that we can pass them all to output
+  effect_unit_columns <- setdiff(colnames(effect_unit), "variable")
 
   if ("coxph" %in% class(fit) & !is.null(grouped_features)) {
     b <- coef(fit)[grouped_features]
@@ -98,21 +100,29 @@ summarize_log_odds_regression <- function(fit,
       lower_bound = exp(estimate - z_score * standard_error) - 1,
       upper_bound = exp(estimate + z_score * standard_error) - 1
     ) |>
-    dplyr::select(variable, unit, effect, lower_bound, upper_bound, p_value)
+    dplyr::select(
+      variable, dplyr::any_of(effect_unit_columns), effect, lower_bound, upper_bound, p_value
+    )
 
-  # Benjamini-Hochberg multiple testing correction
-  
-  p_value_vec <- coef_table |>
-    dplyr::filter(!is.na(p_value)) |>
-    dplyr::arrange(p_value) |>
-    dplyr::pull(p_value)
+  if (bold_p_value_threshold > 0) {
 
-  threshold_vec <- bold_p_value_threshold / length(p_value_vec) * 1:length(p_value_vec)
+    # Benjamini-Hochberg multiple testing correction
 
-  bold_p_value_treshold_adjusted <- max(threshold_vec[p_value_vec < threshold_vec])  
+    p_value_vec <- coef_table |>
+      dplyr::filter(!is.na(p_value)) |>
+      dplyr::arrange(p_value) |>
+      dplyr::pull(p_value)
 
-  coef_table <- coef_table |>
-    dplyr::mutate(significant = p_value < bold_p_value_treshold_adjusted)
+    threshold_vec <- bold_p_value_threshold / length(p_value_vec) * 1:length(p_value_vec)
+
+    bold_p_value_treshold_adjusted <- max(threshold_vec[p_value_vec < threshold_vec])  
+
+    coef_table <- coef_table |>
+      dplyr::mutate(significant = p_value < bold_p_value_treshold_adjusted)
+
+  } else {
+    coef_table$significant <- FALSE
+  }
 
   if (format_pretty) {
 
@@ -125,7 +135,6 @@ summarize_log_odds_regression <- function(fit,
             dplyr::case_when(
               is.na(x) ~ NA_character_,
               x > 0 ~ paste0("+", x_pct),
-              x < 0 ~ paste0("-", x_pct),  # double dash in latex looks like a minus sign
               TRUE ~ x_pct
             )
           }
@@ -134,15 +143,11 @@ summarize_log_odds_regression <- function(fit,
           is.na(lower_bound) | is.na(upper_bound) ~ NA_character_,
           TRUE ~ glue::glue("({lower_bound}, {upper_bound})")
         ),
-        p_value_bold = p_value < bold_p_value_threshold,
-        p_value_string = substring(sprintf("%.3f", p_value), 2),
-        p_value = ifelse(
-          test = p_value < bold_p_value_threshold,
-          yes = paste0("{\\bf", p_value_string, "}"),
-          no = p_value_string
-        )
+        p_value = dplyr::case_when(!is.na(p_value) ~ substring(sprintf("%.3f", p_value), 2))
       ) |>
-      dplyr::select(variable, effect, interval, p_value)
+      dplyr::select(
+        variable, dplyr::any_of(effect_unit_columns), effect, interval, p_value, significant
+      )
 
     return(coef_table_pretty)
   }
