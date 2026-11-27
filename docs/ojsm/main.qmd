@@ -5,20 +5,93 @@ execute:
   echo: false
 ---
 
-```{r, cache = FALSE, message = FALSE}
+```{r setup, cache = FALSE, message = FALSE}
 root <- "../.."
 devtools::load_all(file.path(root, "package/pitchinj"))
+source(file.path(root, "scripts/functions/figures.R"))
 source(file.path(root, "scripts/functions/tables.R"))
 
 output_dir <- file.path(root, "output")
-multivariate_coxph <- readRDS(file.path(output_dir, "models/multivariate_coxph.rds"))
 ```
 
-```{r}
+```{dot fig-consort}
+digraph {
+  node [shape = box, height = 1.1, width = 3]
+  A [label = "All MLB and MiLB pitcher-seasons\nlevel A+ and above, 2018-2026\nN = 19,084"]
+  B [
+    label = "Excluded MiLB 2018-2021\nbecause MiLB pitch tracking\nstarted in 2021\nN = 4,910",
+    style = "filled"
+  ]
+  C [label = "MLB 2018-2026 pitcher-seasons\nand MiLB 2022-2026 pitcher-seasons\nN = 14,174"]
+  D [
+    label = "Excluded pitcher-seasons\nwith insufficient prior-year\npitch-tracking data\nN = 2,220",
+    style = "filled"
+  ]
+  E [label = "Full cohort for primary analysis\nN = 11,954"]
+  A -> C -> E
+  A -> B
+  C -> D
+}
 ```
 
-```{r}
-tab_hits_multivariate(multivariate_coxph)
+## Results
+
+```{r fig-pitch-reclass}
+#| fig-asp: 1.5
+#| layout-ncol: 2
+pitch_reclass <- data.table::fread(file.path(output_dir, "models/pitch_reclass.csv"))
+fig_pitch_class_old(pitch_reclass)
+fig_pitch_class_new(pitch_reclass)
 ```
 
+```{r tab-multivariate-hits-full}
+coxph_multivariate_hits_full <- readRDS(
+  file.path(output_dir, "models/coxph_multivariate_hits_full.rds")
+)
+tab_multivariate(coxph_multivariate_hits_full)
+```
 
+```{r tab-univariate}
+coxph_univariate <- readRDS(file.path(output_dir, "models/coxph_univariate.rds"))
+tab_univariate(coxph_univariate)
+```
+
+```{r fig-prob-injury-density}
+pred_injury <- data.table::fread(file.path(output_dir, "models/pred_injury.csv"))
+fig_prob_injury_density(pred_injury)
+```
+
+## Appendix
+
+```{r fig-calibration}
+cumulative_incidence_cv <- data.table::fread(
+  file.path(output_dir, "models/cumulative_incidence_cv.csv")
+)
+fig_calibration(cumulative_incidence_cv)
+```
+
+```{r tab-multivariate-ucl}
+coxph_multivariate_ucl <- readRDS(file.path(output_dir, "models/coxph_multivariate_ucl.rds"))
+tab_multivariate(coxph_multivariate_ucl)
+```
+
+```{r tab-multivariate-hits-matched}
+coxph_multivariate_hits_matched <- readRDS(
+  file.path(output_dir, "models/coxph_multivariate_hits_matched.rds")
+)
+tab_multivariate(coxph_multivariate_hits_matched)
+```
+
+```{r tab-multivariate-hits-majors}
+coxph_multivariate_hits_majors <- readRDS(
+  file.path(output_dir, "models/coxph_multivariate_hits_majors.rds")
+)
+tab_multivariate(coxph_multivariate_hits_majors)
+```
+
+```{r tab-multivariate-hits-minors}
+coxph_multivariate_hits_minors <- readRDS(
+  file.path(output_dir, "models/coxph_multivariate_hits_minors.rds")
+)
+tab_multivariate(coxph_multivariate_hits_minors)
+```

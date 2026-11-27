@@ -53,7 +53,7 @@ etl_season_summary <- function() {
     dplyr::mutate(
       role = dplyr::case_when(
         pitches / games >= 75 ~ "starter",
-        pitches / games >= 60 & level == "minors" ~ "starter",
+        pitches / games >= 60 & level != "MLB" ~ "starter",
         TRUE ~ "reliever"
       ) |>
         factor(levels = c("starter", "reliever"))   # we want starter to be the "default" level
