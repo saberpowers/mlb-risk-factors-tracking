@@ -15,7 +15,8 @@ data_year_over_year <- pitchinj::wrangle_data_year_over_year(
   pitch_tracking_data = pitch_tracking_list$pitch_tracking
 )
 
-pitcher_subset <- pitchinj::subset_pitchers(data_year_over_year)
+pitcher_subset <- pitchinj::subset_pitchers(data_year_over_year, verbose = TRUE)
+scaled_features <- pitchinj::get_features(only_scaled = TRUE)
 
 # What is the baseline rate of IL placement and UCL surgery in the majors cohort?
 data_year_over_year |>
@@ -49,11 +50,11 @@ feature_subset_univariate <- pitchinj::get_features(
   model = "univariate"
 )
 
-univariate_coxph <- list()
+coxph_univariate <- list()
 
 for (outcome in c("hits", "ucl")) {
 
-  univariate_coxph[[outcome]] <- list()
+  coxph_univariate[[outcome]] <- list()
 
   pitchers <- pitcher_subset$full
   features <- feature_subset_univariate
@@ -75,50 +76,61 @@ for (outcome in c("hits", "ucl")) {
       )
 
     # Estimate univariate Cox PH regression models
-    univariate_coxph[[outcome]][[feature]] <- data_feature |>
+    coxph_univariate[[outcome]][[feature]] <- data_feature |>
       pitchinj::standardize_data(model = "univariate") |>
       pitchinj::fit_injury_model(model = "coxph", features = feature)
+
+    coxph_univariate[[outcome]][[feature]]$effect_unit <- data_feature |>
+      dplyr::summarize(
+        n = dplyr::n(),
+        mean = signif(mean(!! rlang::sym(feature)), 2),
+        sd = signif(sd(!! rlang::sym(feature)), 2),
+        .groups = "drop"
+      ) |>
+      dplyr::mutate(
+        unit = ifelse(feature %in% scaled_features, signif(sd, 2), 1),
+        variable = feature
+      )
   }
 }
 
 
 # Estimate multivariate models ----
 
-feature_subset_multivariate <- list(
-  full = pitchinj::get_features(type = c("demographics", "ballistics"), model = "multivariate"),
-  majors = pitchinj::get_features(type = c("demographics", "ballistics"), model = "multivariate"),
-  minors = pitchinj::get_features(type = c("demographics", "ballistics"), model = "multivariate")
+model_manifest <- tibble::tribble(
+  ~subset, ~outcome,
+  "full", "hits",
+  "full", "ucl",
+  "matched", "hits",
+  "majors", "hits",
+  "minors", "hits"
 )
 
-multivariate_coxph <- list()
-multivariate_coxph_cv <- list()
-prob_injury_cv <- list()
-cumulative_incidence_cv <- list()
+feature_subset_multivariate <- pitchinj::get_features(
+  type = c("demographics", "ballistics"),
+  model = "multivariate"
+)
 
-for (subset in c("majors", "minors", "full")) {
+coxph_multivariate <- list()
+coxph_multivariate_cv <- list()
 
-  multivariate_coxph[[subset]] <- list()
+for (subset in c("minors", "majors", "matched", "full")) {
+
+  coxph_multivariate[[subset]] <- list()
 
   pitchers <- pitcher_subset[[subset]]
-  features <- feature_subset_multivariate[[subset]]
-  scaled_features <- pitchinj::get_features(only_scaled = TRUE)
 
-  multivariate_coxph[[subset]]$effect_unit <- data_year_over_year |>
+  effect_unit <- data_year_over_year |>
     dplyr::inner_join(pitchers, by = c("player_id", "year")) |>
     dplyr::summarize(
       dplyr::across(
-        .cols = dplyr::all_of(features),
+        .cols = dplyr::all_of(feature_subset_multivariate),
         .fns = sd
       )
     ) |>
     tidyr::pivot_longer(cols = dplyr::everything(), names_to = "variable", values_to = "sd") |>
-    dplyr::mutate(
-      unit = dplyr::case_when(
-        variable %in% scaled_features ~ sd,
-        grepl("^usage_", variable) ~ 0.1,
-        TRUE ~ 1
-      )
-    )
+    dplyr::mutate(unit = ifelse(variable %in% scaled_features, signif(sd, 2), 1)) |>
+    dplyr::select(variable, unit)
 
   data_subset <- data_year_over_year |>
     dplyr::inner_join(pitchers, by = c("player_id", "year")) |>
@@ -130,19 +142,45 @@ for (subset in c("majors", "minors", "full")) {
       spin_SL_x_usage_SL = dplyr::coalesce(spin_SL * usage_SL / mean(usage_SL), 0)
     )
 
-  if (subset == "full") {
-    data.table::fwrite(data_subset, file = "output/models/data_full_cohort.csv")
-  }
-
   for (outcome in c("ucl", "hits")) {
-    multivariate_coxph[[subset]][[outcome]] <- data_subset |>
-      dplyr::mutate(
-        severity = !!rlang::sym(glue::glue("severity_{outcome}")),
-        pitches = !!rlang::sym(glue::glue("pitches_{outcome}"))
-      ) |>
-      pitchinj::fit_injury_model(model = "coxph", features = features)
+
+    is_in_manifest <- model_manifest |>
+      dplyr::filter(subset == !!subset, outcome == !!outcome) |>
+      nrow() |>
+      as.logical()
+
+    if (is_in_manifest) {
+
+      coxph_multivariate[[subset]][[outcome]] <- data_subset |>
+        dplyr::mutate(
+          severity = !!rlang::sym(glue::glue("severity_{outcome}")),
+          pitches = !!rlang::sym(glue::glue("pitches_{outcome}"))
+        ) |>
+        pitchinj::fit_injury_model(model = "coxph", features = feature_subset_multivariate)
+
+      coxph_multivariate[[subset]][[outcome]]$effect_unit <- effect_unit
+    }
   }
 
+  if (subset == "full") {
+    pred_injury_starter <- pitchinj::predict_injury(
+      object = coxph_multivariate$full$hits,
+      newdata = data_subset |>
+        dplyr::filter(level_minors == 0, role_reliever == 0),
+      newtime = 2500
+    ) |>
+      dplyr::mutate(role = "starter", .before = 1)
+  
+    pred_injury_reliever <- pitchinj::predict_injury(
+      object = coxph_multivariate$full$hits,
+      newdata = data_subset |>
+        dplyr::filter(level_minors == 0, role_reliever == 1),
+      newtime = 1000
+    ) |>
+      dplyr::mutate(role = "reliever", .before = 1)
+
+    pred_injury <- dplyr::bind_rows(pred_injury_starter, pred_injury_reliever)
+  }
 
   # out-of-sample validation
   if (subset == "full") {
@@ -155,73 +193,73 @@ for (subset in c("majors", "minors", "full")) {
       unique_pitchers,
       f = sample(rep(1:num_folds, length = length(unique_pitchers)))
     )
-    multivariate_coxph_cv[[subset]] <- list()
-    prob_injury_cv[[subset]] <- list()
-    prob_injury_cv[[subset]]$hits <- NULL
+    coxph_multivariate_cv[[subset]] <- list()
+    prob_injury_cv <- NULL
 
     for (k in 1:num_folds) {
 
-      multivariate_coxph_cv[[subset]][[k]] <- list()
+      coxph_multivariate_cv[[subset]][[k]] <- list()
 
-      multivariate_coxph_cv[[subset]][[k]]$hits <- data_subset |>
+      coxph_multivariate_cv[[subset]][[k]]$hits <- data_subset |>
         dplyr::filter(!player_id %in% fold[[k]]) |>
         dplyr::mutate(severity = severity_hits, pitches = pitches_hits) |>
-        pitchinj::fit_injury_model(model = "coxph", features = features)
+        pitchinj::fit_injury_model(model = "coxph", features = feature_subset_multivariate)
 
       prob_injury_starter <- pitchinj::predict_injury(
-        object = multivariate_coxph_cv[[subset]][[k]]$hits,
+        object = coxph_multivariate_cv[[subset]][[k]]$hits,
         newdata = data_subset |>
           dplyr::filter(player_id %in% fold[[k]]),
         newtime = 2500
       )$prob_inj
 
       prob_injury_reliever <- pitchinj::predict_injury(
-        object = multivariate_coxph_cv[[subset]][[k]]$hits,
+        object = coxph_multivariate_cv[[subset]][[k]]$hits,
         newdata = data_subset |>
           dplyr::filter(player_id %in% fold[[k]]),
         newtime = 1000
       )$prob_inj
 
-      prob_injury_cv[[subset]]$hits <- data_subset |>
+      prob_injury_cv <- data_subset |>
         dplyr::filter(player_id %in% fold[[k]]) |>
         dplyr::select(year, player_id, pitches = pitches_hits, role, level_coarse, severity = severity_hits) |>
         dplyr::mutate(
           prob_injury = ifelse(role == "starter", prob_injury_starter, prob_injury_reliever)
         ) |>
-        dplyr::bind_rows(prob_injury_cv[[subset]]$hits)
+        dplyr::bind_rows(prob_injury_cv)
     }
 
-    prob_injury_cv[[subset]]$hits <- prob_injury_cv[[subset]]$hits |>
+    prob_injury_cv <- prob_injury_cv |>
       dplyr::mutate(
         quantile = floor((rank(prob_injury, ties.method = "first") - 1) / dplyr::n() * num_quantiles),
-        .by = role
+        .by = c(level_coarse, role)
       )
 
     extract_cumulative_incidence <- function(data, newtime) {
-      fit <- pitchinj::fit_injury_model(data, features = "")
+
+      fit <- pitchinj::fit_injury_model(data, features = "", strata = NULL)
       pred <- pitchinj::predict_injury(fit, newdata = data, newtime = newtime)
       return(pred)
     }
 
-    cumulative_incidence_cv[[subset]]$hits <- tibble::tibble()
+    cumulative_incidence_cv <- tibble::tibble()
 
-    for (ell in c("majors", "minors")) {
+    for (ell in c("majors")) {
       for (r in c("starter", "reliever")) {
         for (q in 1:num_quantiles - 1) {
-          cumulative_incidence_cv[[subset]]$hits <- extract_cumulative_incidence(
-            data = prob_injury_cv[[subset]]$hits |>
-              dplyr::filter(level_coarse == ell, role == r, quantile == q),
+          pred_subset <- prob_injury_cv |>
+              dplyr::filter(level_coarse == ell, role == r, quantile == q)
+          cumulative_incidence_cv <- extract_cumulative_incidence(
+            data = pred_subset,
             newtime = ifelse(r == "starter", 2500, 1000)
           ) |>
             dplyr::mutate(
+              level = ell,
               role = r,
               quantile = q,
-              pred_prob_injury = prob_injury_cv[[subset]]$hits |>
-                dplyr::filter(role == r, quantile == q) |>
-                with(mean(prob_injury)),
+              pred_prob_injury = mean(pred_subset$prob_injury),
               .before = 1
             ) |>
-            dplyr::bind_rows(cumulative_incidence_cv[[subset]]$hits)
+            dplyr::bind_rows(cumulative_incidence_cv)
         }
       }
     }
@@ -236,8 +274,13 @@ logger::log_info("Saving results")
 data.table::fwrite(pitch_tracking_list$pitch_reclass, file = "output/models/pitch_reclass.csv")
 data.table::fwrite(pitch_tracking_list$vendor_translation, file = "output/models/vendor_translation.csv")
 data.table::fwrite(data_year_over_year, file = "output/models/data_year_over_year.csv")
-saveRDS(univariate_coxph, file = "output/models/univariate_coxph.rds")
-saveRDS(multivariate_coxph, file = "output/models/multivariate_coxph.rds")
-saveRDS(cumulative_incidence_cv, file = "output/models/cumulative_incidence_cv.rds")
+data.table::fwrite(pred_injury, file = "output/models/pred_injury.csv")
+data.table::fwrite(cumulative_incidence_cv, file = "output/models/cumulative_incidence_cv.csv")
+saveRDS(coxph_univariate, file = "output/models/coxph_univariate.rds")
+saveRDS(coxph_multivariate$full$hits, file = "output/models/coxph_multivariate_hits_full.rds")
+saveRDS(coxph_multivariate$full$ucl, file = "output/models/coxph_multivariate_ucl.rds")
+saveRDS(coxph_multivariate$matched$hits, file = "output/models/coxph_multivariate_hits_matched.rds")
+saveRDS(coxph_multivariate$majors$hits, file = "output/models/coxph_multivariate_hits_majors.rds")
+saveRDS(coxph_multivariate$minors$hits, file = "output/models/coxph_multivariate_hits_minors.rds")
 
 logger::log_info("Done")
